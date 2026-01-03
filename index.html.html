@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Libreta de Mantenimiento</title>
+
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = "https://gtjwcutwkwffxdifbsiw.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0andjdXR3a3dmZnhkaWZic2l3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU2NDI4NzAsImV4cCI6MjA4MTIxODg3MH0.BYujwdfUNsHrBCLVADmDoUUMjc-Vbwk366nPOHYH8ic";
+
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+  </script>
+
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    body { font-family: Arial; padding: 16px; }
+    label { font-size: 13px; }
+    input, select, textarea { width: 100%; padding: 6px; }
+    .container { max-width: 900px; margin: auto; }
+    .box { border: 1px solid #ccc; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+    canvas { border: 1px dashed #777; border-radius: 6px; touch-action: none; }
+  </style>
+</head>
+
+<body>
+<div class="container">
+  <h2>Libreta de Mantenimiento – Registro</h2>
+
+  <div class="box">
+    <label>Placa del vehículo</label>
+    <input id="plate">
+
+    <label>Nombre del cliente</label>
+    <input id="client">
+
+    <div style="display:flex; gap:10px">
+      <div style="flex:1">
+        <label>Fecha</label>
+        <input type="date" id="date">
+      </div>
+      <div style="flex:1">
+        <label>Kilometraje</label>
+        <input type="number" id="km">
+      </div>
+    </div>
+
+    <label>Sistema revisado</label>
+    <select id="system">
+      <option value="">Seleccionar…</option>
+      <option>Motor</option>
+      <option>Frenos</option>
+      <option>Suspensión</option>
+      <option>Eléctrico</option>
+      <option>Aire acondicionado</option>
+      <option>Refrigeración</option>
+      <option>Alineación</option>
+      <option>Antes de viajar</option>
+    </select>
+
+    <label>Estado</label>
+    <select id="status">
+      <option value="">Seleccionar…</option>
+      <option>OK</option>
+      <option>Atención</option>
+      <option>Urgente</option>
+    </select>
+
+    <label>Notas / Recomendación</label>
+    <textarea id="notes" rows="3"></textarea>
+  </div>
+
+  <div class="box">
+    <h4>Firma del técnico</h4>
+    <canvas id="sigTech" width="300" height="120"></canvas>
+    <button type="button" onclick="clearCanvasById('sigTech')">Limpiar</button>
+
+    <h4 style="margin-top:16px;">Firma del cliente</h4>
+    <canvas id="sigClient" width="300" height="120"></canvas>
+    <button type="button" onclick="clearCanvasById('sigClient')">Limpiar</button>
+  </div>
+
+  <button type="button" onclick="saveAndGenerate()">Guardar en Supabase y generar PDF</button>
+</div>
+
+<script>
+  const { jsPDF } = window.jspdf;
+
+  // --- Dibujo de firma en los canvas ---
+  function setupSignatureCanvas(canvas) {
+    const ctx = canvas.getContext("2d");
+    let drawing = false;
+
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+      };
+    }
+
+    function start(e) {
+      e.preventDefault();
+      drawing = true;
+      ctx.beginPath();
+      const { x, y } = getPos(e);
+      ctx.moveTo(x, y);
+    }
+
+    function move(e) {
+      if (!drawing) return;
+      e.preventDefault();
+      const { x, y } = getPos(e);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+
+    function end() {
+      drawing = false;
+    }
+
+    canvas.addEventListener("mousedown", start);
+    canvas.addEventListener("mousemove", move);
+    canvas.addEventListener("mouseup", end);
+    canvas.addEventListener("mouseleave", end);
+
+    canvas.addEventListener("touchstart", start, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    canvas.addEventListener("touchend", end);
+  }
+
+  function clearCanvasById(id) {
+    const c = document.getElementById(id);
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+
+  function getSignature(id) {
+    const canvas = document.getElementById(id);
+    return canvas.toDataURL("image/png");
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    setupSignatureCanvas(document.getElementById("sigTech"));
+    setupSignatureCanvas(document.getElementById("sigClient"));
+  });
+
+  // --- Guardar y generar PDF ---
+  async function saveAndGenerate() {
+    const vehicle_plate = document.getElementById("plate").value.trim();
+    const client_name  = document.getElementById("client").value.trim();
+    const date         = document.getElementById("date").value;
+    const mileageRaw   = document.getElementById("km").value;
+    const system       = document.getElementById("system").value;
+    const status       = document.getElementById("status").value;
+    const notes        = document.getElementById("notes").value;
+
+    // Validaciones mínimas
+    if (!vehicle_plate || !date || !system || !status) {
+      alert("Placa, fecha, sistema y estado son obligatorios.");
+      return;
+    }
+
+    const data = {
+      vehicle_plate,
+      client_name,
+      date,
+      mileage: mileageRaw ? Number(mileageRaw) : null,
+      system,
+      status,
+      notes,
+      tech_signature: getSignature("sigTech"),
+      client_signature: getSignature("sigClient"),
+    };
+
+    // 1) Guardar en Supabase
+    const { error } = await db.from("maintenance_logs").insert(data);
+
+    if (error) {
+      console.error(error);
+      alert("Error guardando en Supabase: " + error.message);
+      return;
+    }
+
+    // 2) Generar PDF
+    const pdf = new jsPDF();
+    pdf.text("LIBRETA DE MANTENIMIENTO", 15, 15);
+    pdf.text(`Vehículo: ${vehicle_plate}`, 15, 25);
+    pdf.text(`Cliente: ${client_name || "-"}`, 15, 32);
+    pdf.text(`Fecha: ${date}   Km: ${mileageRaw || "-"}`, 15, 39);
+    pdf.text(`Sistema: ${system}`, 15, 46);
+    pdf.text(`Estado: ${status}`, 15, 53);
+    pdf.text("Notas:", 15, 60);
+    pdf.text(notes || "-", 15, 68);
+
+    pdf.addImage(data.tech_signature, "PNG", 15, 90, 60, 30);
+    pdf.text("Firma técnico", 20, 125);
+
+    pdf.addImage(data.client_signature, "PNG", 120, 90, 60, 30);
+    pdf.text("Firma cliente", 130, 125);
+
+    pdf.save(`libreta-${vehicle_plate || "vehiculo"}.pdf`);
+
+    alert("✅ Guardado en Supabase y PDF generado.");
+  }
+</script>
+</body>
+</html>
